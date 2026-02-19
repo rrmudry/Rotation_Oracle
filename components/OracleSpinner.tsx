@@ -1,8 +1,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { AppState, RotationDirection, OracleResult } from '../types';
-import { Loader2, RotateCw, RotateCcw, Sparkles, ArrowRightCircle, Volume2, AudioLines, Key, AlertCircle } from 'lucide-react';
-import { GoogleGenAI, Modality } from "@google/genai";
+import { RotateCw, RotateCcw, ArrowRightCircle, Volume2, AudioLines, Key, AlertCircle } from 'lucide-react';
 
 interface OracleSpinnerProps {
   state: AppState;
@@ -10,100 +9,26 @@ interface OracleSpinnerProps {
   result: OracleResult | null;
   onFinishStep: () => void;
   onRestart: () => void;
-  onQuotaError?: () => void;
 }
 
-function decodeBase64(base64: string) {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishStep, onRestart, onQuotaError }) => {
+const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishStep, onRestart }) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [ttsError, setTtsError] = useState<string | null>(null);
-  const [cachedBuffer, setCachedBuffer] = useState<AudioBuffer | null>(null);
-  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [revealedChars, setRevealedChars] = useState(0);
   const [hasAutoPlayed, setHasAutoPlayed] = useState(false);
-  const [prefetechAttemptedFor, setPrefetechAttemptedFor] = useState<string | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-
-  // Pre-fetch audio as soon as result is available
-  useEffect(() => {
-    const prefetch = async () => {
-      if (!result || cachedBuffer || isLoadingAudio || prefetechAttemptedFor === result.criteria.title) return;
-
-      setPrefetechAttemptedFor(result.criteria.title);
-      setIsLoadingAudio(true);
-      try {
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        }
-        const ctx = audioContextRef.current;
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const prompt = `${result.criteria.title}. ${result.criteria.description}`;
-
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash-preview-tts",
-          contents: [{ parts: [{ text: prompt }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-            },
-          },
-        });
-
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (base64Audio) {
-          const buffer = await decodeAudioData(decodeBase64(base64Audio), ctx, 24000, 1);
-          setCachedBuffer(buffer);
-        }
-      } catch (error: any) {
-        console.error("Pre-fetch TTS failed:", error);
-      } finally {
-        setIsLoadingAudio(false);
-      }
-    };
-
-    prefetch();
-  }, [result, cachedBuffer, isLoadingAudio]);
 
   // Auto-play when ready
   useEffect(() => {
-    if (state === AppState.DECREE && cachedBuffer && !hasAutoPlayed && !isSpeaking) {
+    if (state === AppState.DECREE && result && !hasAutoPlayed && !isSpeaking) {
       setHasAutoPlayed(true);
       speakDecree();
     }
-  }, [state, cachedBuffer, hasAutoPlayed, isSpeaking]);
+  }, [state, result, hasAutoPlayed, isSpeaking]);
 
   // Text reveal animation logic
   useEffect(() => {
     if (isSpeaking && result) {
       const fullText = result.criteria.description;
-      const duration = cachedBuffer ? cachedBuffer.duration * 1000 : 3000;
+      const duration = 3000; // Expected duration for fallback TTS
       const charInterval = duration / fullText.length;
 
       setRevealedChars(0);
@@ -119,10 +44,9 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
 
       return () => clearInterval(interval);
     } else if (!isSpeaking && result) {
-      // If not speaking, show all text (e.g. after it finishes or if it hasn't started)
       if (hasAutoPlayed) setRevealedChars(result.criteria.description.length);
     }
-  }, [isSpeaking, result, cachedBuffer, hasAutoPlayed]);
+  }, [isSpeaking, result, hasAutoPlayed]);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
@@ -132,12 +56,15 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
     return () => clearTimeout(timeout);
   }, [state, onFinishStep]);
 
-  const speakWithWebSpeech = (text: string) => {
+  const speakDecree = () => {
+    if (!result || isSpeaking) return;
+
     if (!('speechSynthesis' in window)) return;
 
     // Cancel any ongoing speech
     window.speechSynthesis.cancel();
 
+    const text = `${result.criteria.title}. ${result.criteria.description}`;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
     utterance.pitch = 0.8;
@@ -154,81 +81,6 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
     window.speechSynthesis.speak(utterance);
   };
 
-  const speakDecree = async () => {
-    if (!result || isSpeaking) return;
-
-    // Resume context if suspended (browser policy)
-    if (audioContextRef.current?.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
-
-    if (cachedBuffer) {
-      playBuffer(cachedBuffer);
-      return;
-    }
-
-    // Fallback if not cached yet
-    setIsSpeaking(true);
-    setTtsError(null);
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-      const ctx = audioContextRef.current;
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `${result.criteria.title}. ${result.criteria.description}`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-          },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), ctx, 24000, 1);
-        setCachedBuffer(audioBuffer);
-        playBuffer(audioBuffer);
-      } else {
-        // No audio data in response, try web speech
-        speakWithWebSpeech(`${result.criteria.title}. ${result.criteria.description}`);
-      }
-    } catch (error: any) {
-      console.error("TTS failed, using fallback:", error);
-      // Fallback to browser TTS
-      speakWithWebSpeech(`${result.criteria.title}. ${result.criteria.description}`);
-
-      if (error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("400")) {
-        setTtsError(error?.message?.includes("400") ? "API Key Invalid" : "API Quota exceeded");
-        if (onQuotaError) onQuotaError();
-      }
-    }
-  };
-
-  const playBuffer = (buffer: AudioBuffer) => {
-    if (!audioContextRef.current) return;
-    const ctx = audioContextRef.current;
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    setIsSpeaking(true);
-    source.onended = () => setIsSpeaking(false);
-    source.start();
-  };
-
-  const handleOpenKeySelector = async () => {
-    if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      // After selecting, the environment variable is updated. We restart.
-      onRestart();
-    }
-  };
-
   if (state === AppState.DECREE && result) {
     return (
       <div className="flex flex-col items-center justify-center w-full max-w-[95vw] lg:max-w-7xl mx-auto text-center space-y-6 animate-in fade-in zoom-in-95 duration-700 py-4">
@@ -241,19 +93,12 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
                 onClick={speakDecree}
                 disabled={isSpeaking}
                 className={`flex items-center gap-3 px-6 py-2 rounded-full border border-white/10 transition-all duration-300 group relative overflow-hidden ${isSpeaking
-                  ? 'bg-violet-500/20 border-violet-400/50 scale-105'
-                  : 'bg-white/5 hover:bg-white/10 hover:border-white/20 hover:scale-105 active:scale-95 shadow-lg'
+                    ? 'bg-violet-500/20 border-violet-400/50 scale-105'
+                    : 'bg-white/5 hover:bg-white/10 hover:border-white/20 hover:scale-105 active:scale-95 shadow-lg'
                   }`}
               >
-                {/* Loading state indicator */}
-                {isLoadingAudio && !cachedBuffer && !isSpeaking && (
-                  <div className="absolute inset-0 bg-violet-500/10 animate-pulse" />
-                )}
-
                 {isSpeaking ? (
                   <AudioLines size={14} className="text-violet-400 animate-pulse" />
-                ) : isLoadingAudio && !cachedBuffer ? (
-                  <Loader2 size={14} className="text-slate-500 animate-spin" />
                 ) : (
                   <Volume2 size={14} className="text-slate-400 group-hover:text-white transition-colors" />
                 )}
@@ -261,25 +106,9 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
                 <span className="text-[0.6rem] font-bold uppercase tracking-[0.2em] text-slate-300 group-hover:text-white transition-colors">
                   {isSpeaking
                     ? 'PROCLAIMING'
-                    : isLoadingAudio && !cachedBuffer
-                      ? 'PREPARING VOICE...'
-                      : 'REPLAY DECREE'}
+                    : 'REPLAY DECREE'}
                 </span>
               </button>
-
-              {ttsError && (
-                <div className="flex flex-col items-center gap-2 animate-in slide-in-from-top-2 duration-300">
-                  <div className="flex items-center gap-2 text-rose-400 text-[0.6rem] font-bold uppercase tracking-widest bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
-                    <AlertCircle size={10} /> {ttsError}
-                  </div>
-                  <button
-                    onClick={handleOpenKeySelector}
-                    className="flex items-center gap-2 text-[0.55rem] font-black text-violet-400 hover:text-violet-300 uppercase tracking-[0.2em] underline decoration-violet-500/30"
-                  >
-                    <Key size={10} /> Use Personal API Key
-                  </button>
-                </div>
-              )}
             </div>
           </div>
 
@@ -329,9 +158,9 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
     <div className="flex flex-col items-center justify-center min-h-[400px] w-full">
       {state === AppState.THINKING && (
         <div className="space-y-8 animate-pulse flex flex-col items-center">
-          <div className="relative h-24 w-24">
-            <Loader2 className="w-full h-full text-violet-500 animate-spin" strokeWidth={1} />
-            <div className="absolute inset-0 bg-violet-500/20 blur-xl rounded-full"></div>
+          <div className="relative h-24 w-24 flex items-center justify-center">
+            <AudioLines className="w-16 h-16 text-violet-500 animate-pulse" strokeWidth={1} />
+            <div className="absolute inset-0 bg-violet-500/10 blur-xl rounded-full"></div>
           </div>
           <div className="space-y-2 text-center">
             <h2 className="text-3xl font-light tracking-[0.5em] text-slate-400 uppercase italic">Reading the Signs</h2>
