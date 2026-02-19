@@ -53,7 +53,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
   useEffect(() => {
     const prefetch = async () => {
       if (!result || cachedBuffer || isLoadingAudio) return;
-      
+
       setIsLoadingAudio(true);
       try {
         if (!audioContextRef.current) {
@@ -103,7 +103,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
       const fullText = result.criteria.description;
       const duration = cachedBuffer ? cachedBuffer.duration * 1000 : 3000;
       const charInterval = duration / fullText.length;
-      
+
       setRevealedChars(0);
       const interval = setInterval(() => {
         setRevealedChars(prev => {
@@ -114,7 +114,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
           return prev + 1;
         });
       }, charInterval);
-      
+
       return () => clearInterval(interval);
     } else if (!isSpeaking && result) {
       // If not speaking, show all text (e.g. after it finishes or if it hasn't started)
@@ -130,9 +130,31 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
     return () => clearTimeout(timeout);
   }, [state, onFinishStep]);
 
+  const speakWithWebSpeech = (text: string) => {
+    if (!('speechSynthesis' in window)) return;
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
+    utterance.pitch = 0.8;
+
+    // Try to find a nice deep mystical voice
+    const voices = window.speechSynthesis.getVoices();
+    const mysticalVoice = voices.find(v => v.name.includes('Google US English') || v.name.includes('Male')) || voices[0];
+    if (mysticalVoice) utterance.voice = mysticalVoice;
+
+    setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
   const speakDecree = async () => {
     if (!result || isSpeaking) return;
-    
+
     // Resume context if suspended (browser policy)
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
@@ -171,13 +193,16 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
         setCachedBuffer(audioBuffer);
         playBuffer(audioBuffer);
       } else {
-        setIsSpeaking(false);
+        // No audio data in response, try web speech
+        speakWithWebSpeech(`${result.criteria.title}. ${result.criteria.description}`);
       }
     } catch (error: any) {
-      console.error("TTS failed:", error);
-      setIsSpeaking(false);
-      if (error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED")) {
-        setTtsError("API Quota exceeded");
+      console.error("TTS failed, using fallback:", error);
+      // Fallback to browser TTS
+      speakWithWebSpeech(`${result.criteria.title}. ${result.criteria.description}`);
+
+      if (error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED") || error?.message?.includes("400")) {
+        setTtsError(error?.message?.includes("400") ? "API Key Invalid" : "API Quota exceeded");
         if (onQuotaError) onQuotaError();
       }
     }
@@ -208,22 +233,21 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
         <div className="w-full space-y-3">
           <div className="flex flex-col items-center gap-2">
             <h2 className="text-[0.65rem] uppercase tracking-[1em] text-violet-400/60 font-black">THE ORACLE SPEAKS</h2>
-            
+
             <div className="flex flex-col items-center gap-2">
               <button
                 onClick={speakDecree}
                 disabled={isSpeaking}
-                className={`flex items-center gap-3 px-6 py-2 rounded-full border border-white/10 transition-all duration-300 group relative overflow-hidden ${
-                  isSpeaking 
-                    ? 'bg-violet-500/20 border-violet-400/50 scale-105' 
+                className={`flex items-center gap-3 px-6 py-2 rounded-full border border-white/10 transition-all duration-300 group relative overflow-hidden ${isSpeaking
+                    ? 'bg-violet-500/20 border-violet-400/50 scale-105'
                     : 'bg-white/5 hover:bg-white/10 hover:border-white/20 hover:scale-105 active:scale-95 shadow-lg'
-                }`}
+                  }`}
               >
                 {/* Loading state indicator */}
                 {isLoadingAudio && !cachedBuffer && !isSpeaking && (
                   <div className="absolute inset-0 bg-violet-500/10 animate-pulse" />
                 )}
-                
+
                 {isSpeaking ? (
                   <AudioLines size={14} className="text-violet-400 animate-pulse" />
                 ) : isLoadingAudio && !cachedBuffer ? (
@@ -231,22 +255,22 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
                 ) : (
                   <Volume2 size={14} className="text-slate-400 group-hover:text-white transition-colors" />
                 )}
-                
+
                 <span className="text-[0.6rem] font-bold uppercase tracking-[0.2em] text-slate-300 group-hover:text-white transition-colors">
-                  {isSpeaking 
-                    ? 'PROCLAIMING' 
-                    : isLoadingAudio && !cachedBuffer 
-                      ? 'PREPARING VOICE...' 
+                  {isSpeaking
+                    ? 'PROCLAIMING'
+                    : isLoadingAudio && !cachedBuffer
+                      ? 'PREPARING VOICE...'
                       : 'REPLAY DECREE'}
                 </span>
               </button>
-              
+
               {ttsError && (
                 <div className="flex flex-col items-center gap-2 animate-in slide-in-from-top-2 duration-300">
                   <div className="flex items-center gap-2 text-rose-400 text-[0.6rem] font-bold uppercase tracking-widest bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
                     <AlertCircle size={10} /> {ttsError}
                   </div>
-                  <button 
+                  <button
                     onClick={handleOpenKeySelector}
                     className="flex items-center gap-2 text-[0.55rem] font-black text-violet-400 hover:text-violet-300 uppercase tracking-[0.2em] underline decoration-violet-500/30"
                   >
@@ -256,7 +280,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
               )}
             </div>
           </div>
-          
+
           <h1 className="text-2xl md:text-5xl lg:text-6xl font-black text-white uppercase tracking-tight leading-none w-full max-w-5xl mx-auto italic drop-shadow-2xl">
             {result.criteria.title}
           </h1>
@@ -271,7 +295,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
               {result.criteria.description.substring(revealedChars)}"
             </span>
           </p>
-          
+
           <div className={`w-full flex items-center justify-center gap-12 border-t border-white/5 pt-10 transition-all duration-1000 ${revealedChars >= result.criteria.description.length ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
             <div className="flex flex-col items-center gap-4">
               <span className="text-slate-500 uppercase tracking-[0.6em] text-[0.7rem] font-black opacity-60">ROTATION DIRECTION</span>
@@ -289,7 +313,7 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
           </div>
         </div>
 
-        <button 
+        <button
           onClick={onRestart}
           className="group flex items-center gap-3 px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition-all text-[0.7rem] font-black uppercase tracking-[0.4em] opacity-40 hover:opacity-100 hover:scale-105 active:scale-95"
         >
