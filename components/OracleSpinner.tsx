@@ -47,13 +47,15 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [revealedChars, setRevealedChars] = useState(0);
   const [hasAutoPlayed, setHasAutoPlayed] = useState(false);
+  const [prefetechAttemptedFor, setPrefetechAttemptedFor] = useState<string | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   // Pre-fetch audio as soon as result is available
   useEffect(() => {
     const prefetch = async () => {
-      if (!result || cachedBuffer || isLoadingAudio) return;
+      if (!result || cachedBuffer || isLoadingAudio || prefetechAttemptedFor === result.criteria.title) return;
 
+      setPrefetechAttemptedFor(result.criteria.title);
       setIsLoadingAudio(true);
       try {
         if (!audioContextRef.current) {
@@ -239,8 +241,8 @@ const OracleSpinner: React.FC<OracleSpinnerProps> = ({ state, result, onFinishSt
                 onClick={speakDecree}
                 disabled={isSpeaking}
                 className={`flex items-center gap-3 px-6 py-2 rounded-full border border-white/10 transition-all duration-300 group relative overflow-hidden ${isSpeaking
-                    ? 'bg-violet-500/20 border-violet-400/50 scale-105'
-                    : 'bg-white/5 hover:bg-white/10 hover:border-white/20 hover:scale-105 active:scale-95 shadow-lg'
+                  ? 'bg-violet-500/20 border-violet-400/50 scale-105'
+                  : 'bg-white/5 hover:bg-white/10 hover:border-white/20 hover:scale-105 active:scale-95 shadow-lg'
                   }`}
               >
                 {/* Loading state indicator */}
